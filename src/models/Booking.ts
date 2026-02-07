@@ -95,7 +95,7 @@ const BookingSchema: Schema = new Schema(
 
 // Generate booking reference
 BookingSchema.virtual('bookingRef').get(function() {
-  return `BK-${this._id.toString().slice(-8).toUpperCase()}`;
+  return `BK-${this.id.toString().slice(-8).toUpperCase()}`;
 });
 
 // Ensure virtuals are included in JSON

@@ -4,11 +4,12 @@ import User from '../models/User';
 
 // Generate JWT Token
 const generateToken = (id: string): string => {
-  return jwt.sign(
-    { id },
-    process.env.JWT_SECRET || 'fallback_secret_key',
-    { expiresIn: process.env.JWT_EXPIRE || '30d' }
-  );
+return jwt.sign(
+  { id },
+  process.env.JWT_SECRET as jwt.Secret,
+  { expiresIn: "30d" }
+);
+
 };
 
 // @desc    Register user
