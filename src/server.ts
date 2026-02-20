@@ -1,12 +1,18 @@
+import "./config/env"; // ✅ FIRST, ABOVE EVERYTHING
+
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import connectDB from './config/database';
 import routes from './routes';
 import errorHandler from './middleware/errorHandler';
 
 // Load env vars
-dotenv.config();
+// dotenv.config();
+
+console.log("ENV TEST:", {
+  refresh: process.env.GMAIL_REFRESH_TOKEN,
+  user: process.env.GMAIL_USER,
+});
 
 // Connect to database
 connectDB();
@@ -35,7 +41,8 @@ app.get('/', (req: Request, res: Response) => {
       packages: '/api/packages',
       bookings: '/api/bookings',
       destinations: '/api/destinations',
-      auth: '/api/auth'
+      auth: '/api/auth',
+      contact: '/api/contact'
     }
   });
 });
@@ -45,17 +52,34 @@ app.get('/', (req: Request, res: Response) => {
 app.get('/tours', async (req: Request, res: Response) => {
   try {
     const Tour = require('./models/Tour').default;
-    const tours = await Tour.find({ status: 'active' }).sort({ createdAt: -1 });
+    const tours = await Tour.find({}).sort({ createdAt: -1 });
     res.json(tours);
   } catch (error) {
     res.status(500).json({ error: 'Error fetching tours' });
   }
 });
+app.post('/contact', async (req: Request, res: Response)=>{
+  try {
+    const Contact = require('./models/Contact').default;
+    const contact = await Contact.create(req.body);
+    res.status(201).json({
+      success: true,
+      message: 'Contact created successfully',
+      data: contact
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: 'Error creating contact',
+      error: (error as Error).message
+    });
+  }
+})
 
 app.get('/packages', async (req: Request, res: Response) => {
   try {
     const Package = require('./models/Package').default;
-    const packages = await Package.find({ status: 'active' }).sort({ createdAt: -1 });
+    const packages = await Package.find({}).sort({ createdAt: -1 });
     res.json(packages);
   } catch (error) {
     res.status(500).json({ error: 'Error fetching packages' });
@@ -65,7 +89,7 @@ app.get('/packages', async (req: Request, res: Response) => {
 app.get('/destinations', async (req: Request, res: Response) => {
   try {
     const Destination = require('./models/Destination').default;
-    const destinations = await Destination.find({ status: 'active' }).sort({ createdAt: -1 });
+    const destinations = await Destination.find({}).sort({ createdAt: -1 });
     res.json(destinations);
   } catch (error) {
     res.status(500).json({ error: 'Error fetching destinations' });

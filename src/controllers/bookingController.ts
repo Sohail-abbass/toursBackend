@@ -1,127 +1,183 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import Booking from '../models/Booking';
+import Tour from '../models/Tour';
+import Package from '../models/Package';
+import { sendBookingEmail } from "../utils/sendMail";
 
-// @desc    Get all bookings
-// @route   GET /api/bookings
-// @access  Private (Admin)
-export const getBookings = async (req: Request, res: Response): Promise<void> => {
+export const createBooking = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status, bookingType, page, limit, sort } = req.query;
-    
-    // Build query
-    const query: any = {};
-    if (status) query.status = status;
-    if (bookingType) query.bookingType = bookingType;
-    
-    // Pagination
-    const pageNum = parseInt(page as string) || 1;
-    const limitNum = parseInt(limit as string) || 20;
-    const skip = (pageNum - 1) * limitNum;
-    
-    // Sort
-    let sortOption: any = { createdAt: -1 };
-    if (sort === 'oldest') sortOption = { createdAt: 1 };
-    if (sort === 'price') sortOption = { totalPrice: -1 };
-    
-    const bookings = await Booking.find(query)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limitNum);
-    
-    const total = await Booking.countDocuments(query);
-    
-    res.status(200).json({
-      success: true,
-      count: bookings.length,
-      total,
-      page: pageNum,
-      pages: Math.ceil(total / limitNum),
-      data: bookings
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching bookings',
-      error: (error as Error).message
-    });
-  }
-};
+    const {
+      bookingType,
+      itemId,
+      customerName,
+      customerEmail,
+      customerPhone,
+      travelers,
+      packageType,
+      message,
+      travelDate
+    } = req.body;
 
-// @desc    Get single booking
-// @route   GET /api/bookings/:id
-// @access  Private (Admin)
-export const getBookingById = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const booking = await Booking.findById(req.params.id);
-    
-    if (!booking) {
-      res.status(404).json({
+    // ==========================
+    // BASIC VALIDATION
+    // ==========================
+    if (!bookingType || !itemId || !customerName || !customerEmail || !customerPhone || !travelers) {
+      res.status(400).json({
         success: false,
-        message: 'Booking not found'
+        message: 'Please provide all required fields'
       });
       return;
     }
-    
-    res.status(200).json({
-      success: true,
-      data: booking
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching booking',
-      error: (error as Error).message
-    });
-  }
-};
 
-// @desc    Create new booking
-// @route   POST /api/bookings
-// @access  Public
-export const createBooking = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const booking = await Booking.create(req.body);
-    
+    if (!mongoose.Types.ObjectId.isValid(itemId)) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid item ID'
+      });
+      return;
+    }
+
+    let item: any;
+    let totalPrice = 0;
+
+    // ==========================
+    // TOUR BOOKING LOGIC
+    // ==========================
+    if (bookingType === 'tour') {
+
+      if (!packageType) {
+        res.status(400).json({
+          success: false,
+          message: 'Tour type (solo, couple, deluxe) is required'
+        });
+        return;
+      }
+
+      item = await Tour.findById(itemId);
+
+      if (!item || item.status !== 'active') {
+        res.status(404).json({
+          success: false,
+          message: 'Tour not found or inactive'
+        });
+        return;
+      }
+
+      const priceMap: any = {
+        solo: item.solo,
+        couple: item.couple,
+        deluxe: item.deluxe
+      };
+
+      const selectedPrice = priceMap[packageType];
+
+      if (!selectedPrice) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid tour type selected'
+        });
+        return;
+      }
+
+      totalPrice = selectedPrice * travelers;
+    }
+
+    // ==========================
+    // PACKAGE BOOKING LOGIC
+    // ==========================
+    else if (bookingType === 'package') {
+
+      item = await Package.findById(itemId);
+
+      if (!item || item.status !== 'active') {
+        res.status(404).json({
+          success: false,
+          message: 'Package not found or inactive'
+        });
+        return;
+      }
+
+      totalPrice = item.price * travelers;
+    }
+
+    else {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid booking type'
+      });
+      return;
+    }
+
+    // ==========================
+    // CREATE BOOKING
+    // ==========================
+    const booking = await Booking.create({
+      bookingType,
+      itemId,
+      itemTitle: item.title,
+      customerName,
+      customerEmail,
+      customerPhone,
+      travelers,
+      packageType: bookingType === 'tour' ? packageType : undefined,
+      totalPrice,
+      message,
+      travelDate
+    });
+    await sendBookingEmail({
+      bookingRef: booking.bookingRef!,      bookingType: booking.bookingType,
+      itemTitle: booking.itemTitle,
+      customerName: booking.customerName,
+      customerEmail: booking.customerEmail,
+      customerPhone: booking.customerPhone,
+      travelers: booking.travelers,
+      totalPrice: booking.totalPrice,
+      message: booking.message,
+    });
     res.status(201).json({
       success: true,
       message: 'Booking created successfully! We will contact you shortly.',
       data: booking
     });
+
   } catch (error) {
-    res.status(400).json({
+    res.status(500).json({
       success: false,
-      message: 'Error creating booking',
+      message: 'Server error while creating booking',
       error: (error as Error).message
     });
   }
 };
-
-// @desc    Update booking status
-// @route   PUT /api/bookings/:id
-// @access  Private (Admin)
 export const updateBooking = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { status, paymentStatus, notes } = req.body;
-    
+    const allowedUpdates = ['status', 'paymentStatus', 'notes'];
+
+    const updates: any = {};
+
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
-      { status, paymentStatus, notes },
+      updates,
       { new: true, runValidators: true }
     );
-    
+
     if (!booking) {
-      res.status(404).json({
-        success: false,
-        message: 'Booking not found'
-      });
+      res.status(404).json({ success: false, message: 'Booking not found' });
       return;
     }
-    
+
     res.status(200).json({
       success: true,
       message: 'Booking updated successfully',
       data: booking
     });
+
   } catch (error) {
     res.status(400).json({
       success: false,
@@ -130,68 +186,36 @@ export const updateBooking = async (req: Request, res: Response): Promise<void> 
     });
   }
 };
-
-// @desc    Delete booking
-// @route   DELETE /api/bookings/:id
-// @access  Private (Admin)
-export const deleteBooking = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const booking = await Booking.findByIdAndDelete(req.params.id);
-    
-    if (!booking) {
-      res.status(404).json({
-        success: false,
-        message: 'Booking not found'
-      });
-      return;
-    }
-    
-    res.status(200).json({
-      success: true,
-      message: 'Booking deleted successfully'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting booking',
-      error: (error as Error).message
-    });
-  }
-};
-
-// @desc    Get booking stats
-// @route   GET /api/bookings/stats
-// @access  Private (Admin)
 export const getBookingStats = async (req: Request, res: Response): Promise<void> => {
   try {
-    const totalBookings = await Booking.countDocuments();
-    const pendingBookings = await Booking.countDocuments({ status: 'pending' });
-    const confirmedBookings = await Booking.countDocuments({ status: 'confirmed' });
-    const completedBookings = await Booking.countDocuments({ status: 'completed' });
-    
-    const revenueAgg = await Booking.aggregate([
+    const stats = await Booking.aggregate([
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          revenue: { $sum: '$totalPrice' }
+        }
+      }
+    ]);
+
+    const paidRevenue = await Booking.aggregate([
       { $match: { paymentStatus: 'paid' } },
       { $group: { _id: null, total: { $sum: '$totalPrice' } } }
     ]);
-    
-    const totalRevenue = revenueAgg[0]?.total || 0;
-    
+
     res.status(200).json({
       success: true,
       data: {
-        totalBookings,
-        pendingBookings,
-        confirmedBookings,
-        completedBookings,
-        totalRevenue
+        statusBreakdown: stats,
+        totalRevenue: paidRevenue[0]?.total || 0
       }
     });
+
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Error fetching booking stats',
+      message: 'Error fetching stats',
       error: (error as Error).message
     });
   }
 };
-
